@@ -1,5 +1,5 @@
-# Review docs/HOSTING.md and docs/SECURITY.md before creating paid resources.
-# The private key is uploaded as a Render secret file, never included in Git.
+# Room competitions: no Microsoft SSO or external identity credentials.
+# Review docs/HOSTING.md for paid costs and first-admin setup.
 services:
   - type: web
     name: fortified-thanksgiving
@@ -25,15 +25,9 @@ services:
         value: /var/data
       - key: SESSION_SECRET
         generateValue: true
-      - key: IDENTITY_SECRET
+      - key: ADMIN_ENCRYPTION_KEY
+        generateValue: true
+      - key: ADMIN_SETUP_TOKEN
         generateValue: true
       - key: BASE_URL
         sync: false
-      - key: OIDC_ISSUER
-        sync: false
-      - key: OIDC_CLIENT_ID
-        sync: false
-      - key: OIDC_CERT_THUMBPRINT
-        sync: false
-      - key: OIDC_PRIVATE_KEY_PATH
-        value: /etc/secrets/entra-private-key.pem

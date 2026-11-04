@@ -1,59 +1,73 @@
-# Fortified Thanksgiving
+# Fortified Thanksgiving — room competitions
 
-A company Thanksgiving photo contest with Microsoft Entra ID sign-in, one photo submission per employee, a private employee gallery, three votes per account, and a leaderboard. Real accounts use generated aliases and keyed contest IDs; the app does not retain Microsoft profile names, email addresses, raw directory IDs or tokens. These IDs are pseudonymous, not fully anonymous. Warm autumn styling includes a temporary typographic brand mark; replace `.brand-mark` in `public/index.html` with your company logo when available.
+A Thanksgiving photo contest with **full-name + shared room-code entry** and a separate **password + authenticator** admin area. Microsoft SSO has been removed. Each room has its own participants, one submission per participant, three final votes on different entries, gallery and leaderboard.
 
-## Local development
+## Run locally
 
-Requires Node.js 24 (tested with 24.22.1) and npm. No external database is needed.
+Node.js 24 is required. From this checkout:
 
 ```sh
-cd /workspace/FortifiedThanksgiving
 npm ci
 npm test
 npm run dev
 ```
 
-The development server listens on loopback port 3000. Choose one of four explicitly labeled fictional demo accounts. New installs have an empty gallery; submit a test photo to try the complete flow. Demo accounts are strictly for local testing and cannot be enabled with `NODE_ENV=production`. Do not publicly expose demo mode.
+The server binds loopback port 3000. In your local browser, open the site and choose **Organizer sign in** (the /admin route). On a new local development database, create the first admin username/password, add its manual secret to a TOTP authenticator app, and confirm the current six-digit code. There is **no default admin password**. Never expose development mode through a public tunnel.
 
-`npm test` starts isolated local HTTP servers and verifies authenticated access, CSRF protection, safe image decoding, one submission per account, duplicate votes, parallel vote requests across sessions, persistence across sign-out, independent vote budgets, vote totals, and unsafe production configuration. It also simulates Microsoft OIDC responses to test certificate-signed client authentication, signature/issuer/audience/expiry/nonce/state checks, PKCE, role/member restrictions, production POST callbacks, secure cookies, replay rejection and identity minimization. These checks require permission to bind local sockets. There is no transpilation/build step. Run `npm audit` before each release.
+Then create a room, assign or generate its shared code, save that code, and distribute its /r/ROOM_ID link and code privately. Room codes are case-insensitive, 10–64 characters, and cannot be retrieved later: rotate a forgotten code.
 
-## Microsoft Entra ID setup
+For browser acceptance testing, install the development dependencies and a Chromium browser, then run `npm run test:browser`. In this cloud environment use `CHROMIUM_PATH=/usr/bin/chromium npm run test:browser`. Elsewhere Playwright can install Chromium with `npx playwright install chromium`. Browser tests create isolated temporary data and fictional admins; they do not change a real contest.
 
-The integration code is implemented and tested against simulated responses; live SSO requires an administrator-provided app registration and has not been tested against your tenant. Follow [the full security and Entra setup instructions](docs/SECURITY.md) and [the hosting comparison and deployment guide](docs/HOSTING.md). A Render Blueprint is included in `render.yaml`; no paid resources have been created.
+## Organizer workflow
 
-1. Create a **single-tenant** Web app registration with the exact owned HTTPS callback; use a separate registration for approved local SSO tests.
-2. Enable **Assignment required**, define and assign the `Contest.Participant` app role only to approved member employees. Add the `acct` optional ID-token claim. Apply company MFA/Conditional Access policies. The app rejects guests and missing assignment claims.
-3. Register a dedicated public RSA certificate in Entra; keep its matching private key in the host's secure secret-file facility. No shared client password, Graph permissions, email scope or offline/refresh-token access is used.
-4. Configure the values below securely. Never commit credentials or paste them into chat. `npm start` reads an ignored `.env` when present. Preserve the identity secret for the contest's lifetime.
+- **Rooms:** create/edit welcome text, join/submission/voting switches, start/deadline dates, and active/draft/closed/archived state. New rooms require approval and start with submissions open and voting closed.
+- **Participants:** review/approve names, mark pending, ban, correct names and recover lost personal sign-in keys. Approval is required to view photos, submit or vote unless disabled for new joins.
+- **Content:** review images, edit titles/stories, hide or disqualify entries, and restore them. Hidden/disqualified entries and unapproved/banned participants' contributions are excluded from public results. Used votes are not refunded.
+- **Oversight:** live results, tied ranks, CSV export with spreadsheet formula protection, and the last 100 admin audit events.
+- **Site:** change the site title, footer message, company logo and maintenance notice.
+- **Admins:** up to two independent accounts, private 24-hour single-use invitations, enable/disable the other account, change your own password and issue account-recovery invitations. Sensitive actions require your password and a fresh authenticator code.
+- **Retention:** archive a competition to stop access, then optionally purge it with its exact title plus password/MFA confirmation. Purging is permanent and deletes that room's participants, entries, photos and votes. Export and back up first.
 
-| Variable | Value |
+Admin access does not automatically create a participant identity. Use a separate browser profile/private window if you also enter the competition.
+
+## Participant workflow and fairness
+
+Enter your **full name + room code**. First-time entry creates a personal sign-in key shown once; save it securely. This browser remembers it in an HTTP-only cookie. A returning name on another device or after signing out also needs that personal key. The organizer can issue a replacement without resetting entries/votes. Two people with the same name need distinguishing names or initials agreed with the organizer.
+
+A shared code and typed name **do not prove identity**. Someone can invent another name or forward the code. New rooms therefore require approval by default; organizers should check names against their expected participants before approving. Approval can be disabled explicitly for low-stakes rooms. The app enforces three votes per approved participant, not three votes per verified human. Voting for your own entry is currently allowed.
+
+Closing submissions/voting and deadlines are checked on the server, not only in the interface. Codes, bans and administrator revocations take effect on subsequent requests. Rotating a room code signs participants out of that room but preserves their accounts, submissions and used votes.
+
+## Production hosting
+
+See [hosting and deployment](docs/HOSTING.md) and [security/operations](docs/SECURITY.md). A paid Render Blueprint is included; no hosting resources are created just by committing it.
+
+Required production configuration:
+
+| Variable | Purpose |
 | --- | --- |
-| `NODE_ENV` | `production` for deployment |
-| `BASE_URL` | Public HTTPS origin, e.g. `https://thanksgiving.company.com` |
-| `OIDC_ISSUER` | `https://login.microsoftonline.com/TENANT_UUID/v2.0` using your directory tenant UUID |
-| `OIDC_CLIENT_ID` | Application/client ID |
-| `OIDC_PRIVATE_KEY_PATH` | Runtime-only path to the certificate's RSA PEM private key |
-| `OIDC_CERT_THUMBPRINT` | Base64url-encoded SHA-256 thumbprint of the registered public certificate |
-| `IDENTITY_SECRET` | Independent stable random secret, at least 32 characters; changing it would change contest IDs |
-| `SESSION_SECRET` | Stable random secret, at least 32 characters |
-| `DATA_DIR` | Persistent directory; default `./data` |
-| `PORT` | Default `3000` |
+| NODE_ENV | production |
+| BASE_URL | Exact public HTTPS origin; no path or trailing query |
+| SESSION_SECRET | Stable random secret, at least 32 characters |
+| ADMIN_ENCRYPTION_KEY | Independent stable random secret, at least 32 characters; protects MFA secrets and code/key hashes |
+| ADMIN_SETUP_TOKEN | Random first-admin bootstrap token, at least 32 characters; needed until the first admin is created |
+| DATA_DIR | Durable local disk directory; default ./data |
+| PORT | Platform-provided port; default 3000 |
 
-Keep `DEMO_AUTH` unset for real SSO. Run `npm start`. Put the server behind **exactly one trusted HTTPS reverse proxy**, prevent direct public access to the Node port, and forward the original scheme. Allow outbound HTTPS to `login.microsoftonline.com` for OIDC discovery, signing keys and token exchange; browsers also need access to Microsoft's normal sign-in services. Never disable TLS verification. For an explicitly proxy-managed cloud runtime, Node 24 supports `NODE_USE_ENV_PROXY=1`; preserve its inherited proxy and CA settings. Do not set proxy overrides on an ordinary host that does not require them.
+Do not put credentials in Git or chat. On Render, generated values live in secure environment settings. Retrieve the first-admin setup token there, enter it only on your HTTPS admin setup form, and remove it from the host after enrollment. No Microsoft app registration, OIDC keys, tenant IDs, SSO credentials, or external login provider is required.
 
-Verify with a real assigned employee: sign in, submit a dish, vote, sign out and back in, then verify that the same vote balance remains. Also verify that an unassigned account and an outside-company account are denied. This is a required rollout check, not covered by local demo tests.
+Keep ADMIN_ENCRYPTION_KEY stable and backed up separately. Losing it means room-code/member-key hashes and encrypted MFA secrets cannot be recovered normally. Startup refuses changed keys instead of silently breaking identity or resetting votes.
 
-## Contest rules and storage
+## Backups and administrator recovery
 
-- One submission per account, with a title, optional story, and one JPG/PNG/WebP photo (8 MB, 25 megapixels maximum). The server decodes the image, strips metadata by re-encoding, and stores a resized WebP.
-- Every account has **three total votes for three different creations**. Votes are final. Voting for your own dish is currently allowed. There is no automatic reset, voting deadline, or second contest season in this initial version.
-- A transaction, uniqueness constraint, and database trigger enforce vote rules. Refreshing, logging out, opening another browser, or issuing parallel requests does not replenish votes.
-- Gallery data, vote totals, and photos require sign-in. The public landing page contains no employee content. Equal totals share a leaderboard rank; zero-vote entries appear too.
-- SQLite, sessions, and uploaded photos live in `data/`, which is ignored by Git. Back up both the database and uploads consistently. Use a durable local disk and one application instance; do not scale this version across independent disks or deploy it on an ephemeral filesystem.
-- The initial version has no admin moderation/removal interface, competition scheduling, or content review. Add those before a rollout if your company requires them. Company SSO protects account identity; it cannot decide whether someone should own multiple employee accounts. Submitted images/text can still identify people; metadata removal does not anonymize their visible content.
+`npm run backup -- /protected/NEW-backup-directory` uses SQLite's online backup API and copies immutable photos. Do not run room purges while backing up. It requires a new destination outside DATA_DIR, excludes active sessions, and never includes the encryption key. Store the backup encrypted and protect it as employee data.
 
-## Environment lifecycle
+If both admins lose their passwords/authenticators, a trusted hosting operator with the **original encryption key** can run `npm run admin:recover -- EXISTING_USERNAME` in the protected host shell. It prints a sensitive one-use recovery invitation valid for one hour. Open it privately, enroll a new password/authenticator, and discard the link. Do not paste recovery links into chat or logs. Recovery preserves rooms, entries and votes.
 
-Dependencies and files can survive an environment snapshot; server processes do not. Restart with `npm run dev` for local demo work or `npm start` with configured Entra credentials. Use the existing checkout: each cloud task is isolated, so do not create a Git worktree unless explicitly requested.
+## Storage and limits
 
-The project is versioned on GitHub. Hosting provisioning, production deployment and environment publication are separate operations. Never claim real company SSO works until it has been tested against the live tenant.
+The new app uses data/rooms.sqlite and data/room-uploads. The former SSO database data/app.sqlite and its photo directory are left untouched. Inspection before this change found zero legacy users, entries or votes, so no migration was needed. The old implementation remains in Git history.
+
+One app instance and durable SQLite-compatible local storage are required. Do not deploy independent replicas or use SQLite on SMB/NFS storage. Room names, participant full names, photos and votes are now intentionally stored: the old claim that the app stores no names no longer applies. Only admit people whose data your organization is authorized to process.
+
+Each cloud task is isolated. Use the existing checkout; do not create a Git worktree unless explicitly requested. Runtime processes must restart after environment restoration. Environment publication and website deployment are separate operations.

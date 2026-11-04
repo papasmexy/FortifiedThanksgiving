@@ -1,66 +1,56 @@
-# Security and privacy boundary
+# Room and administrator security
 
-No application can be guaranteed "entirely secure." This is an implementation and test record, not an independent penetration test, compliance certification, or proof of a correctly configured live tenant/provider.
+The app no longer performs Microsoft SSO or any external login exchange. Participant access is based on a shared room code, self-entered name and a personal return key. Administrator access is separate and stronger. This is not an identity-verified corporate authentication system or a guarantee of complete security.
 
-## Data flow
+## Trust and privacy
 
-1. The employee's browser goes directly to `login.microsoftonline.com` for the configured **single tenant**. Microsoft/your organization's identity policies handle passwords, MFA, federation and Conditional Access. The site never collects Microsoft passwords.
-2. Microsoft sends a short-lived authorization code back to the registered app callback. In production this is a form POST, not a query parameter in an access-log URL.
-3. The app server exchanges the code directly with the pinned Microsoft token endpoint over HTTPS, with PKCE and a certificate-signed PS256 client assertion. The private key remains on the app host; Entra holds its public certificate. There is no third-party authentication broker or Microsoft Graph call.
-4. The server validates the ID-token signature using Microsoft's signing keys plus issuer, audience, expiry and nonce. It enforces the configured tenant, a valid object ID, `acct=0` (member) and the assigned `Contest.Participant` app role.
-5. The server derives a keyed HMAC of the tenant/object ID, retains only that contest ID and a generated alias, then discards tokens and claims. The browser receives an opaque HTTP-only session cookie, not Microsoft tokens or a raw Microsoft ID.
+- Anyone who knows a room code can request entry under a chosen name. The app cannot prove that a name is truthful or that two names are two people. Require approval and review against an external roster for meaningful competition integrity. Approval is enabled by default.
+- Pending participants can see their room's welcome/status but not photos or entries. Only approved room participants and admins can view gallery data/photos. Turning off approval auto-approves new joins and intentionally makes the shared code the admission boundary.
+- A room code can be forwarded. Rotate a leaked code; all existing sessions in that room must re-enter it. Their personal keys, submissions and votes are preserved.
+- A registered name is unique within a room after Unicode/case/whitespace normalization. Reusing it from another device requires the participant's personal return key; the shared room code alone cannot take over that name.
+- A remembered participant key stays in a Secure/HTTP-only host cookie in production. Sign-out clears it. Personal keys and admin invitations are shown once and must be shared/saved privately.
+- Full participant names are now stored because they are explicitly part of this login and attribution design. Names, photos, submitted stories, room settings and vote records are employee-linked data. Other approved people in the same room can see names attached to published entries. Admins see membership and usage counts.
+- Passwords, room codes, personal keys and invitations are never stored in plaintext in the app database. Admin passwords use salted scrypt (N=32768,r=8,p=3); bearer values use purpose-separated keyed HMAC hashes. Admin authenticator secrets are encrypted with AES-256-GCM under the stable admin master secret. Application logs do not record credentials or underlying exception details.
+- The hosting provider still processes network traffic, stores the disk/backups and may log IPs and infrastructure metadata. Review its retention, region and vendor policies. Encrypt storage/backups and restrict account access. Images are re-encoded to strip metadata but visible faces/names/text remain.
 
-Microsoft claims exist briefly in server memory as part of sign-in. The hosting service terminates TLS and administers the underlying infrastructure. Therefore "all SSO exchanges remain only inside Microsoft" is **not** a possible claim for a website you host elsewhere. The actual trust boundary is Microsoft, the employee's browser, and the company-controlled hosting account/provider. To keep that infrastructure under company governance, use company Azure or an approved internal host.
+## First administrator and second administrator
 
-## What is stored
+Production refuses to start without independent strong SESSION_SECRET and ADMIN_ENCRYPTION_KEY and an exact HTTPS BASE_URL. A fresh installation also requires a random ADMIN_SETUP_TOKEN of at least 32 characters. The first admin enters that token on /admin, chooses a 14–128 character password and enrolls a six-digit time-based authenticator. There is no shipped password, public registration route for arbitrary admins, or email delivery service.
 
-- **Persistent app state:** keyed contest IDs, generated `Home cook …` aliases, entries, sanitized photos and votes. Session rows hold the contest ID/alias and CSRF state. Temporary pending-login state includes random state/nonce and a PKCE verifier, not Microsoft tokens.
-- **Not persisted by the application:** employee names, email addresses, raw tenant/object/subject IDs, Microsoft ID/access/refresh tokens, passwords, directory profiles or group memberships. No tokens are sent to analytics, browser storage or third-party auth providers. No analytics/tracking dependencies are included.
-- **Necessary configuration:** the tenant UUID, public client/application ID, issuer, public certificate thumbprint, private signing key and two independent random secrets must exist on the app host. The claim that the host stores no organizational information whatsoever would be false: it needs this configuration to select and authenticate with your tenant.
-- **User content:** photos/titles/stories can identify people or company details. Re-encoding strips metadata but does not anonymize faces, visible names or written text. The UI warns users not to include those. Uploaded content requires company sign-in to view.
-- **Provider metadata:** the host and Microsoft can retain IP addresses, infrastructure/security events and other metadata under their policies. The app does not control those retention rules. Verify them contractually/configurationally.
+The bootstrap token works only while there are zero admin accounts; a transaction prevents two first admins winning a race. Remove the bootstrap token from the host after setup. Keep it out of browser bookmarks, screenshots and chat.
 
-These contest identifiers are **pseudonymous personal data**, not mathematically anonymous. They deliberately link the same account across sessions to stop repeat voting. A party possessing the secret and matching directory IDs could recreate that link. Use the same privacy/access/retention controls you would apply to other employee-linked data.
+The first admin can invite one other administrator. Each account has its own password and authenticator. Invitations are private one-use links (secret in the URL fragment, removed by the page), expire in 24 hours, and bind to a named admin username. Existing usernames can be invited for recovery instead of creating a third account. There are at most two admin records, including disabled accounts.
 
-## Entra administrator setup
+Sensitive actions require current password and a fresh authenticator code: administrator invitation/recovery, account enable/disable, password change, participant credential recovery and permanent room deletion. TOTP codes accept a one-step clock window and cannot be replayed. Maintain accurate host time. Registration itself signs the new admin in; wait for a fresh authenticator code before a sensitive action.
 
-1. Register a company-owned **single-tenant Web application**. Set `signInAudience` to `AzureADMyOrg`; do not use `common`, `organizations` or consumer endpoints. Configure only the exact owned HTTPS `/auth/callback`; no wildcard redirects. Use a separate registration for local tests rather than adding local redirects to the production app.
-2. Disable implicit/hybrid token flows and public client flows. The app uses authorization code + PKCE with a confidential client. Remove default `User.Read`/Graph permissions if present. The only requested scopes are `openid profile`; `profile` supplies the immutable `oid` used for the contest ID. Returned display claims are ignored and discarded.
-3. Define an enabled app role named `Contest.Participant`, value exactly `Contest.Participant`, allowed member type **Users/Groups** (`allowedMemberTypes: ["User"]` in the application manifest). Enable **Assignment required** in Enterprise Applications, then explicitly assign approved employees to this role. Group assignment/Conditional Access capabilities depend on your Entra licensing; individual assignment is an alternative where supported. Do not assign guest or secondary accounts.
-4. Add the `acct` optional claim to **ID tokens**. The app refuses missing/guest account type. In the application manifest merge this into existing optional claims, preserving other settings: `{"optionalClaims":{"idToken":[{"name":"acct","source":null,"essential":true,"additionalProperties":[]}]}}`. Do not replace your whole manifest with this fragment. The app checks the claim even if the identity provider ignores `essential`.
-5. Apply the company's MFA/Conditional Access requirements to this enterprise app. The application does not override tenant policy or infer MFA from a browser session. Enforce compliant devices/location restrictions if required. Only IT can establish that those live policies apply.
-6. Create a dedicated RSA certificate/key pair of at least 2048 bits (3072 recommended). Keep the private key in the host's secure secret-file facility; upload only the public certificate to Entra. The app uses a PS256 assertion and `x5t#S256` base64url SHA-256 thumbprint, with the token endpoint as audience, following Microsoft's current guidance. Prefer an organization-issued certificate; a dedicated self-signed certificate is acceptable to Entra when explicitly registered. Never send its private key through chat or Git.
-7. Compute the public thumbprint with `openssl x509 -in entra-cert.pem -outform DER | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '='`. This prints a public thumbprint, not a key. Configure `OIDC_PRIVATE_KEY_PATH` to the PEM private key and `OIDC_CERT_THUMBPRINT` to that thumbprint. Assign an owner and a certificate expiry/rotation reminder. No shared OIDC client password is used.
-8. Set `OIDC_ISSUER=https://login.microsoftonline.com/TENANT_UUID/v2.0`, `OIDC_CLIENT_ID` to the registration's UUID, `BASE_URL` to the exact HTTPS origin and `NODE_ENV=production`. Generate independent random `SESSION_SECRET` and `IDENTITY_SECRET` values (at least 32 characters each; e.g. 32 random bytes encoded base64url). Keep a recoverable protected copy of IDENTITY_SECRET; changing it changes contest identities, so startup refuses a mismatch.
+Admin sign-in is rate limited and locks a username for 15 minutes after five failed password/MFA attempts. The lockout survives a restart; IP limits do not. An attacker who knows a username may cause a temporary lockout, so keep a second admin and an operator recovery route. Admin sessions have an absolute eight-hour lifetime; disabled accounts and version changes invalidate sessions on subsequent requests. The last active admin cannot disable themselves.
 
-The private key is readable only by the runtime's service identity and authorized platform administrators. Do not enable a request/body logger, APM body capture, or error formatter that records sign-in requests/tokens. Application errors are deliberately generic and do not print underlying identity-provider messages.
+If both admins are locked out or lose MFA, a trusted host operator uses the recovery script documented in README. This requires access to the database and original master key. The one-hour recovery invitation re-enrolls password/MFA on the existing account, invalidates prior sessions and preserves competitions. Losing the encryption key requires restoring the original key; do not delete the database to bypass the guard.
 
-## Implemented protections
+## Competition integrity
 
-- Strict single-tenant Microsoft issuer and endpoint origin; no user-controlled issuer/redirect/next URL.
-- Explicit RS256 validation of Microsoft's ID-token signatures and PS256 certificate client authentication; library checks state, nonce, token audience/expiry and PKCE.
-- Exact app-role/member checks rather than email-domain authorization. No Graph/directory-reading permission, email scope or offline access/refresh-token request.
-- Session fixation protection through ID regeneration; Secure/HttpOnly/host-only production cookies; one-hour sessions. A temporary `SameSite=None; Secure` cookie supports Microsoft's cross-site POST callback; the regenerated authenticated cookie returns to `SameSite=Lax`.
-- App CSRF tokens for mutations; the OIDC callback instead uses state+nonce+PKCE. Production rejects GET callbacks. No permissive CORS.
-- Database transactions, uniqueness and a trigger enforce three votes and one vote per entry. Identity survives a session/browser change. An explicit startup check prevents accidentally changing identity keys or silently resetting legacy SSO voters.
-- Sign-in and per-account API rate limits; one image upload/processing slot at a time; request/header timeouts. Size, type and decoded pixel limits; metadata removal and WebP re-encoding. Busy uploads ask the user to retry. This is not DDoS protection; provider controls and monitoring are still required.
-- Same-origin resources, restrictive CSP, HSTS, no-referrer policy, no caching of private responses and no third-party fonts/tracking. Photos/API require authentication; `/healthz` exposes only readiness.
-- Production refuses demo accounts, weak/missing secrets and insecure origin settings. Development binds loopback by default. Do not put public port-forwarding/tunnels in front of demo mode.
+- Room membership is scoped in server sessions and checked against the database for every request. UUID knowledge alone grants no access.
+- Entries and votes carry matching room/member foreign keys, preventing cross-room writes. A unique constraint allows one entry per participant and one vote per entry. A transaction and trigger enforce the three-vote budget even across simultaneous requests or new browser sessions.
+- Opening/closing rooms, start times, submission/voting deadlines, approvals, bans and moderation are checked server-side. Upload authorization is checked again after image processing, so closing/banning during an upload cannot bypass the policy.
+- Hidden/disqualified entries, content from non-approved participants and votes from non-approved voters are excluded from displayed results. The original records and spent vote budgets remain; moderation/recovery never silently refunds votes.
+- Admin name corrections preserve the same participant ID, entries, personal key and used votes. Approval is not bulk identity verification: review names before using “approve all pending.”
+- Audit events record administrator, operation, target IDs and time, not passwords, room codes or recovery keys. The UI shows the last 100 events; historical audit rows remain in the database until a separate retention procedure.
+- CSV exports neutralize leading spreadsheet formula characters. Exports contain participant names and should be treated as sensitive.
 
-## Limits and required rollout checks
+## Web and upload controls
 
-Authentication verifies accounts, not human uniqueness. Two valid assigned company accounts can receive two budgets; IT must control assignment and account provisioning. Removing a role does not immediately revoke an already issued local session: sessions last up to one hour. Local sign-out destroys the app session but does not sign the employee out of Microsoft or other company apps.
+Secure/HTTP-only/SameSite=Lax host-only production cookies, session ID regeneration on login/enrollment, CSRF tokens and same-origin checks protect mutations. Admin credentials are never placed in room forms. No permissive CORS, third-party scripts, fonts or analytics are included. The CSP restricts scripts/assets and framing; HTTPS responses set HSTS and private responses are not cached.
 
-Test against the actual tenant: valid assigned member, unassigned member, guest, outside tenant, expired certificate, revoked assignment after session expiry, and your MFA/device policy. Inspect the live cookies, HTTPS redirection, access control for photos, provider logging, backup restoration and data-retention procedure. Automated tests use a locally simulated Microsoft issuer/keys, not Microsoft's real service. A security specialist should review the deployment if company policy requires it.
+The app must sit behind exactly one trusted HTTPS reverse proxy. Do not expose the Node port directly or broaden proxy trust to arbitrary clients. Local development binds loopback and allows first-admin setup without a bootstrap token; never publicly tunnel development mode.
 
-Legacy accounts created by the original email/name-based version are not deleted or automatically remapped. If real SSO data already exists, startup refuses the incompatible identity scheme until an explicit migration preserves its votes/submissions. Existing local demo data is preserved.
+Uploads require valid room authorization or administrator authentication. They are limited to one JPG/PNG/WebP, 8 MB and 25 megapixels, decoded/re-encoded to resized WebP, with metadata removed. One upload is processed at a time to bound memory on small servers. Busy uploads return a retryable 429. This is not DDoS protection or a guarantee that the smallest host handles every 200-person burst; use provider monitoring and upgrade as necessary.
 
-## Official guidance
+## Maintenance, deletion and backups
 
-- https://learn.microsoft.com/en-us/entra/identity-platform/security-best-practices-for-app-registration
-- https://learn.microsoft.com/en-us/entra/identity-platform/certificate-credentials
-- https://learn.microsoft.com/en-us/entra/identity-platform/claims-validation
-- https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims-reference
-- https://github.com/panva/openid-client
+Maintenance mode pauses participant APIs while preserving admin access and health checks. Closed rooms remain viewable but read-only; archived rooms reject participants. Permanent deletion requires archiving, typing the exact room title and password/MFA confirmation, then removes only that room's participants, entries, votes and photos. Audit rows remain. It is not reversible without a backup.
 
-Dependency audit during this change found vulnerable libvips-related components in the original sharp release. The dependency was upgraded to sharp 0.35.5; rerun `npm audit` on every release. A zero-advisory result only describes the advisory database at the time of the check.
+Make encrypted backups and test restores. Use the online SQLite backup script, keep the original master key separately, and avoid purges during a backup. Restore into an isolated environment with the same key and confirm counts, images, votes and administrator sign-in before replacing a live service. Sessions are excluded from backups, so users sign in again after restore. Set a company-approved retention deadline for live data, audit rows, backups and any provider snapshots.
+
+## Validation limits
+
+Automated tests cover the new room/admin flows, crypto reference vectors, takeover/replay attempts, room isolation, approvals/bans, concurrent voting, schedules, moderation, recovery, account revocation, CSV safety and guarded purge. Browser tests cover actual forms and responsive layouts using isolated fictional data. They do not establish provider compliance, verified identities, resistance to all attacks, or production capacity. Review the actual host, TLS, backups, logs and admission process before real employee use.
