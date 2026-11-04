@@ -1,0 +1,39 @@
+# Review docs/HOSTING.md and docs/SECURITY.md before creating paid resources.
+# The private key is uploaded as a Render secret file, never included in Git.
+services:
+  - type: web
+    name: fortified-thanksgiving
+    runtime: node
+    plan: starter
+    region: ohio
+    repo: https://github.com/papasmexy/FortifiedThanksgiving
+    branch: main
+    autoDeployTrigger: 'off'
+    buildCommand: npm ci --no-fund && npm test
+    startCommand: npm start
+    healthCheckPath: /healthz
+    disk:
+      name: contest-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: 24.22.1
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: IDENTITY_SECRET
+        generateValue: true
+      - key: BASE_URL
+        sync: false
+      - key: OIDC_ISSUER
+        sync: false
+      - key: OIDC_CLIENT_ID
+        sync: false
+      - key: OIDC_CERT_THUMBPRINT
+        sync: false
+      - key: OIDC_PRIVATE_KEY_PATH
+        value: /etc/secrets/entra-private-key.pem

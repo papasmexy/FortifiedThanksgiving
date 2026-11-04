@@ -63,6 +63,19 @@ test('upload validates image contents, stores a safe photo, and allows one entry
   assert.equal((await person.request('/api/entries', { method: 'POST', body: form('Second dish') })).status, 409);
 });
 
+test('health checks do not create sessions and per-account API rate limits cannot be bypassed with another session', async t => {
+  const { client, db } = await fixture(t);
+  const guest = client();
+  const health = await guest.request('/healthz');
+  assert.deepEqual(await health.json(), { ok: true });
+  assert.equal(health.headers.get('set-cookie'), null);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM sessions').get().n, 0);
+  const person = client(); await person.login('alex');
+  for (let i = 0; i < 120; i++) assert.equal((await person.request('/api/entries')).status, 200);
+  const other = client(); await other.login('alex');
+  assert.equal((await other.request('/api/entries')).status, 429);
+});
+
 test('three lifetime votes on distinct entries persist across logout and separate sessions; concurrent requests cannot exceed budget', async t => {
   const { client, form, db } = await fixture(t);
   const people = [];
